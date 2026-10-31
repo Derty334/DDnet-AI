@@ -1,0 +1,68 @@
+
+name: Windows x64 build
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [master]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    env:
+      CARGO_HTTP_MULTIPLEXING: false
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v5
+        with:
+          submodules: recursive
+
+      - name: Install Vulkan SDK
+        uses: humbletim/install-vulkan-sdk@v1.2
+        with:
+          version: 1.3.296.0
+          cache: true
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2.9.2
+        with:
+          workspaces: |
+            src/mastersrv
+            src/masterping
+            ./
+
+      - name: Build mastersrv
+        run: cargo build
+        working-directory: src/mastersrv
+
+      - name: Build masterping
+        run: cargo build
+        working-directory: src/masterping
+
+      - name: Configure release build
+        run: cmake -S . -B release -A x64 -DEXCEPTION_HANDLING=ON -DVULKAN=ON -DCMAKE_BUILD_TYPE=Release -Werror=dev -DDOWNLOAD_GTEST=ON -DCMAKE_RUNTIME_OUTPUT_DIRECTORY_RELEASE=.
+
+      - name: Build DDNet
+        run: cmake --build release --config Release --target everything --parallel
+
+      - name: Package Windows client
+        run: cmake --build release --config Release --target package_default
+
+      - name: Collect ZIP
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force artifacts | Out-Null
+          $package = Get-ChildItem release -Filter '*-win64.zip' -Recurse | Select-Object -First 1
+          if (-not $package) { throw 'Windows ZIP package was not produced.' }
+          Copy-Item $package.FullName artifacts/
+
+      - name: Upload Windows build
+        uses: actions/upload-artifact@v6
+        with:
+          name: DDNet-AI-Windows-x64
+          path: artifacts/*.zip
+          if-no-files-found: error
